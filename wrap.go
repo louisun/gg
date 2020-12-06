@@ -2,57 +2,89 @@ package gg
 
 import (
 	"strings"
-	"unicode"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/math/fixed"
 )
 
-type measureStringer interface {
-	MeasureString(s string) (w, h float64)
-}
+const (
+	breakLineChar = "\n"
+	breakLineMark = "---"
+)
 
-func splitOnSpace(x string) []string {
-	var result []string
-	pi := 0
-	ps := false
-	for i, c := range x {
-		s := unicode.IsSpace(c)
-		if s != ps && i > 0 {
-			result = append(result, x[pi:i])
-			pi = i
+func wordWrap(f font.Face, text string, width float64, indent bool) []string {
+	var (
+		lines  []string
+		result []string
+	)
+
+	rawLines := strings.Split(text, breakLineChar)
+	for i, line := range rawLines {
+		line = strings.TrimSpace(line)
+		if indent && line != "" {
+			line = string('\u0009') + string('\u0009') + line
 		}
-		ps = s
+		lines = append(lines, lineSplit(f, line, width)...)
+		// break line mark
+		if i != len(rawLines) {
+			lines = append(lines, breakLineMark)
+		}
 	}
-	result = append(result, x[pi:])
-	return result
-}
 
-func wordWrap(m measureStringer, s string, width float64) []string {
-	var result []string
-	for _, line := range strings.Split(s, "\n") {
-		fields := splitOnSpace(line)
-		if len(fields)%2 == 1 {
-			fields = append(fields, "")
-		}
-		x := ""
-		for i := 0; i < len(fields); i += 2 {
-			w, _ := m.MeasureString(x + fields[i])
-			if w > width {
-				if x == "" {
-					result = append(result, fields[i])
-					x = ""
-					continue
-				} else {
-					result = append(result, x)
-					x = ""
-				}
+	for i, line := range lines {
+		if i != len(lines) {
+			if line != breakLineMark {
+				result = append(result, line, "")
+			} else {
+				result = append(result, "")
 			}
-			x += fields[i] + fields[i+1]
 		}
-		if x != "" {
-			result = append(result, x)
-		}
-	}
-	for i, line := range result {
-		result[i] = strings.TrimSpace(line)
 	}
 	return result
+}
+
+func lineSplit(f font.Face, text string, width float64) []string {
+	var (
+		lines        = make([]string, 0)
+		runes        = make([]rune, 0)
+		advance      = fixed.Int26_6(0)
+		previousRune = rune(-1)
+	)
+
+	for _, currentRune := range text {
+		if previousRune >= 0 {
+			advance += f.Kern(previousRune, currentRune)
+		}
+
+		a, ok := f.GlyphAdvance(currentRune)
+		if !ok {
+			continue
+		}
+
+		advance += a
+
+		// new line
+		if float64(advance>>6) > width {
+			lines = append(lines, string(runes))
+			runes = make([]rune, 0)
+			runes = append(runes, currentRune)
+
+			a, ok := f.GlyphAdvance(currentRune)
+			if !ok {
+				a = fixed.Int26_6(0)
+			}
+
+			advance = a
+			previousRune = rune(-1)
+		} else {
+			runes = append(runes, currentRune)
+			previousRune = currentRune
+		}
+	}
+
+	if len(runes) != 0 {
+		lines = append(lines, string(runes))
+	}
+
+	return lines
 }
